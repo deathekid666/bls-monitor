@@ -1,68 +1,128 @@
 import os
 import requests
+import hashlib
 from bs4 import BeautifulSoup
+from datetime import datetime
+import json
 
 URL = "https://blsspainmorocco.com/casablanca/french/"
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-POSITIVE_KEYWORDS = [
-    "appointment",
-    "book",
-    "schedule",
-    "available",
-    "select",
-    "slot"
-]
+STATUS_FILE = "status.json"
+STATE_FILE = "state.txt"
 
-NEGATIVE_KEYWORDS = [
-    "fully booked",
-    "no appointment",
-    "currently unavailable",
-    "no slots"
-]
 
-def send_message(msg):
+# ------------------------
+# TELEGRAM
+# ------------------------
+def send(msg):
     requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": msg},
         timeout=15
     )
 
-def check_site():
+
+# ------------------------
+# FETCH CLEAN PAGE
+# ------------------------
+def get_page():
     r = requests.get(URL, timeout=20)
-    text = r.text.lower()
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    for t in soup(["script", "style", "noscript", "svg", "img", "footer", "header"]):
+        t.decompose()
+
+    text = " ".join(soup.get_text(" ", strip=True).lower().split())
+    fp = hashlib.sha256(text.encode()).hexdigest()
+
+    return text, fp
+
+
+# ------------------------
+# STATE DETECTOR
+# ------------------------
+def detect(text):
+    open_words = [
+        "book appointment",
+        "select appointment",
+        "available appointment",
+        "vacant slot"
+    ]
+
+    closed_words = [
+        "fully booked",
+        "no appointment",
+        "no slots",
+        "currently unavailable"
+    ]
 
     score = 0
-    signals = []
 
-    for w in POSITIVE_KEYWORDS:
+    for w in open_words:
         if w in text:
-            score += 2
-            signals.append(f"+ {w}")
+            score += 10
 
-    for w in NEGATIVE_KEYWORDS:
+    for w in closed_words:
         if w in text:
-            score -= 3
-            signals.append(f"- {w}")
+            score -= 12
 
-    return score, signals
+    return "OPEN" if score >= 10 else "CLOSED"
 
+
+# ------------------------
+# WRITE DASHBOARD JSON
+# ------------------------
+def write_dashboard(state, fp):
+    data = {
+        "state": state,
+        "time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "hash": fp,
+        "url": URL
+    }
+
+    with open(STATUS_FILE, "w") as f:
+        json.dump(data, f)
+
+
+# ------------------------
+# MAIN
+# ------------------------
 def run():
-    print("Checking...")
+    print("LIVE DASHBOARD MODE")
 
-    score, signals = check_site()
+    text, fp = get_page()
+    state = detect(text)
 
-    if score > 2:
-        msg = "🚨 POSSIBLE APPOINTMENT UPDATE\n\n"
-        msg += "\n".join(signals)
-        msg += "\n\n" + URL
+    last = None
+    if os.path.exists(STATE_FILE):
+        last = open(STATE_FILE).read().strip()
 
-        send_message(msg)
+    # first run
+    if not last:
+        with open(STATE_FILE, "w") as f:
+            f.write(state)
+
+        write_dashboard(state, fp)
+        print("baseline saved")
+        return
+
+    changed = state != last
+
+    # update dashboard ALWAYS
+    write_dashboard(state, fp)
+
+    # alert only on OPEN transition
+    if last != "OPEN" and state == "OPEN":
+        send("🚨 LIVE ALERT: APPOINTMENT OPENED\n\n" + URL)
         print("ALERT SENT")
-    else:
-        print("No alert")
+
+    # save state
+    with open(STATE_FILE, "w") as f:
+        f.write(state)
+
 
 if __name__ == "__main__":
     run()

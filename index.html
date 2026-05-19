@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>BLS Live Dashboard</title>
+  <meta http-equiv="refresh" content="15">
+  <style>
+    body{
+      font-family: Arial;
+      text-align:center;
+      margin-top:60px;
+      background:#111;
+      color:white;
+    }
+
+    .open{
+      color:#00ff88;
+      font-size:50px;
+      font-weight:bold;
+    }
+
+    .closed{
+      color:#ff4444;
+      font-size:50px;
+      font-weight:bold;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>BLS Appointment Monitor</h1>
+
+<div id="status">Loading...</div>
+
+<script>
+fetch("status.json")
+.then(r => r.json())
+.then(data => {
+
+  let cls = data.state === "OPEN" ? "open" : "closed";
+
+  document.getElementById("status").innerHTML = `
+    <div class="${cls}">
+      ${data.state}
+    </div>
+
+    <p>Last Update:</p>
+    <p>${data.time}</p>
+  `;
+})
+.catch(() => {
+  document.getElementById("status").innerHTML =
+    "<div class='closed'>NO DATA YET</div>";
+});
+</script>
+
+</body>
+</html>
